@@ -31,7 +31,7 @@
 #define PIN_SW4_TAIL    7   // Tail
 #define PIN_SW5_MARK    15  // Marker
 #define PIN_SW6_AUX     16  // Auxiliary
-#define PIN_SW7_CYCLE   17  // Cycle (reserved — not yet implemented)
+#define PIN_SW7_CYCLE   17  // Cycle
 
 // ======================= I²C Bus (INA226 modules) =======================
 #define PIN_I2C_SDA     47
