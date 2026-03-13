@@ -55,20 +55,20 @@ static constexpr bool kBypassInaPresenceCheck = true;
 
 // =============================================================================
 // High Current Monitoring & Cooldown
-// Enforces 20.5A limit: 120 seconds on, 120 seconds cooldown
+// Enforces 28A limit: 120 seconds on, 120 seconds cooldown
 // =============================================================================
 
-static uint32_t g_highCurrentStartMs = 0;  // Timestamp when >20.5A started (0 = inactive)
+static uint32_t g_highCurrentStartMs = 0;  // Timestamp when >28A started (0 = inactive)
 static uint32_t g_cooldownStartMs = 0;     // Timestamp when cooldown started (0 = not in cooldown)
 
 static constexpr uint32_t HIGH_CURRENT_LIMIT_MS = 120000;  // Maximum high current duration (seconds)
 static constexpr uint32_t COOLDOWN_PERIOD_MS = 120000;     // Required cooldown time (2 minutes)
-static constexpr float HIGH_CURRENT_THRESHOLD = 20.5f;     // Current threshold (amps)
+static constexpr float HIGH_CURRENT_THRESHOLD = 28.0f;     // Current threshold (amps)
 
 // =============================================================================
 // INA226 ALERT Pin ISR (Short Circuit Detection)
 // =============================================================================
-// ALERT pin triggers on extreme overcurrent (>30A).
+// ALERT pin triggers on extreme overcurrent (>33A).
 // ESP32 remains powered (source battery); ISR flags the event so the main loop
 // can disable the buck via PIN_BUCK_EN and log to NVS.
 static volatile bool g_alertTriggered = false;
@@ -451,7 +451,7 @@ void setup() {
       tft->print("Possible Short Circuit");
       
       tft->setCursor(6, 76);
-      if (extremeI >= 30.0f) {
+      if (extremeI >= 33.0f) {
         tft->printf("Current: %.1fA", extremeI);
       }
       
@@ -476,10 +476,10 @@ void setup() {
   INA226::begin();
   INA226_SRC::begin();
   
-  // Configure INA226 ALERT pin for extreme overcurrent detection (>30A)
+  // Configure INA226 ALERT pin for extreme overcurrent detection (>33A)
   // ALERT triggers before buck converter shutdown, allowing ISR to log event
   if (INA226::PRESENT) {
-    INA226::configureAlert(30.0f);  // Trigger at 30A
+    INA226::configureAlert(33.0f);  // Trigger at 33A (above 31A software OCP)
     pinMode(PIN_INA_LOAD_ALERT, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(PIN_INA_LOAD_ALERT), ina_alert_isr, FALLING);
     Serial.println("[APP] INA226 ALERT ISR attached on GPIO 42");
