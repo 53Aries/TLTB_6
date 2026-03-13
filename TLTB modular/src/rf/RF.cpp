@@ -19,12 +19,17 @@ namespace {
   constexpr uint32_t BURST_GAP_MS          = 250;  // gap indicating end of a button-burst
   constexpr uint32_t MAX_BURST_MS          = 500;  // finalize even if still noisy after this window
 
+  // Slot layout: 0-5 = relay channels, 6 = CYCLE, 7 = ALL OFF
+  constexpr int     NUM_RF_SLOTS = 8;
+  constexpr uint8_t BTN_CYCLE    = 6;
+  constexpr uint8_t BTN_ALL_OFF  = 7;
+
   // rc-switch handles capture internally, no local ISR buffers needed
 
   uint32_t g_last_activity_ms = 0;
 
   struct Learned { uint32_t sig; uint32_t sum; uint16_t len; uint8_t relay; };
-  Learned g_learn[6];
+  Learned g_learn[NUM_RF_SLOTS];
 
   Preferences g_prefs;
   int8_t activeRelay = -1; // -1 = none on
@@ -35,12 +40,16 @@ namespace {
     bool active;
     uint32_t lastMs;
     uint32_t startMs;
-    uint8_t votes[6];
-    uint32_t bestScore[6];
-    uint8_t coarseVotes[6];
+    uint8_t votes[NUM_RF_SLOTS];
+    uint32_t bestScore[NUM_RF_SLOTS];
+    uint8_t coarseVotes[NUM_RF_SLOTS];
     bool anyEv;
   };
-  VoteAgg g_agg = {false, 0, 0, {0,0,0,0,0,0}, {0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu}, {0,0,0,0,0,0}, false};
+  VoteAgg g_agg = {false, 0, 0,
+    {0,0,0,0,0,0,0,0},
+    {0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu},
+    {0,0,0,0,0,0,0,0},
+    false};
   uint32_t g_block_until_ms = 0;
 
   // Forward declaration for burst finalizer
@@ -51,7 +60,11 @@ namespace {
     g_agg.lastMs = 0;
     g_agg.startMs = 0;
     g_agg.anyEv = false;
-    for (int i=0;i<6;++i){ g_agg.votes[i]=0; g_agg.coarseVotes[i]=0; g_agg.bestScore[i]=0xFFFFFFFFu; }
+    for (int i = 0; i < NUM_RF_SLOTS; ++i) {
+      g_agg.votes[i] = 0;
+      g_agg.coarseVotes[i] = 0;
+      g_agg.bestScore[i] = 0xFFFFFFFFu;
+    }
   }
 
   static void finalizeBurst() {
@@ -59,7 +72,7 @@ namespace {
     int winner = -1; uint8_t bestVotes = 0; uint32_t bestScore = 0xFFFFFFFFu;
     if (g_agg.anyEv) {
       // choose winner from EV votes first
-      for (int i=0;i<6;++i){
+      for (int i = 0; i < NUM_RF_SLOTS; ++i) {
         uint8_t v = g_agg.votes[i];
         if (!v) continue;
         uint32_t sc = g_agg.bestScore[i];
@@ -70,7 +83,7 @@ namespace {
     } else {
       // fallback: use coarse votes only if unambiguous (single non-zero bucket)
       int nz = 0; int idx = -1;
-      for (int i=0;i<6;++i){ if (g_agg.coarseVotes[i]) { nz++; idx = i; } }
+      for (int i = 0; i < NUM_RF_SLOTS; ++i) { if (g_agg.coarseVotes[i]) { nz++; idx = i; } }
       if (nz == 1 && idx >= 0) winner = idx;
     }
     if (winner >= 0) {
@@ -96,9 +109,8 @@ namespace {
     if (value == 0 || bits == 0) return false;
 #ifdef RF_DEBUG
     Serial.printf("[RF] rc-switch recv val=%lu bits=%u proto=%u\n", value, bits, proto);
-  
 #endif
-  // Use (value) as signature; fold protocol into sum/len for coarse and tie-breakers
+    // Use (value) as signature; fold protocol into sum/len for coarse and tie-breakers
     outHash = (uint32_t)value;
     // Compose a coarse sum surrogate: bits*8 + proto to space-apart signatures
     outSum = (uint32_t)(bits * 8u + (proto & 0xF));
@@ -110,7 +122,7 @@ namespace {
   // Persistence
   void loadPrefs() {
     g_prefs.begin("tltb", false);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < NUM_RF_SLOTS; ++i) {
       char key[16];
       snprintf(key, sizeof(key), "rf_sig%u", i);
       g_learn[i].sig = g_prefs.getULong(key, 0);
@@ -143,13 +155,37 @@ namespace {
            digitalRead(PIN_SW7_CYCLE) == HIGH;
   }
 
-  // Activate relay with exclusivity
+  // Activate relay with exclusivity; handles special virtual buttons (CYCLE / ALL OFF)
   void handleTrigger(uint8_t rindex) {
-    if (rindex >= (uint8_t)R_COUNT) return;
-    
     // Check if RF mode is enabled; if not, ignore the trigger silently
     if (!isRfModeEnabled()) return;
-    
+
+    // --- Special virtual buttons ---
+    if (rindex == BTN_ALL_OFF) {
+      allOff();
+      activeRelay = -1;
+      Buzzer::beep();
+      return;
+    }
+
+    if (rindex == BTN_CYCLE) {
+      if (activeRelay < 0 || activeRelay >= (int)R_COUNT) {
+        // Nothing active — start at the first relay
+        relayOn((RelayIndex)0);
+        activeRelay = 0;
+      } else {
+        relayOff((RelayIndex)activeRelay);
+        int next = (activeRelay + 1) % (int)R_COUNT;
+        relayOn((RelayIndex)next);
+        activeRelay = next;
+      }
+      Buzzer::beep();
+      return;
+    }
+
+    // --- Regular relay channels 0-5 ---
+    if (rindex >= (uint8_t)R_COUNT) return;
+
     // Mode-aware behavior: if RV mode and BRAKE is requested, map to LEFT+RIGHT
     bool isBrake = (rindex == (uint8_t)R_BRAKE);
     bool rvMode = (getUiMode() == 1);
@@ -164,7 +200,7 @@ namespace {
         return;
       }
       // Otherwise, activate RV brake mapping
-      for (int i = 0; i < 6; ++i) relayOff((RelayIndex)i);
+      for (int i = 0; i < (int)R_COUNT; ++i) relayOff((RelayIndex)i);
       relayOn(R_LEFT); relayOn(R_RIGHT);
       activeRelay = (uint8_t)R_BRAKE;
       Buzzer::beep();
@@ -178,7 +214,7 @@ namespace {
       Buzzer::beep();
       return;
     }
-    for (int i = 0; i < 6; ++i) relayOff((RelayIndex)i);
+    for (int i = 0; i < (int)R_COUNT; ++i) relayOff((RelayIndex)i);
     relayOn((RelayIndex)rindex);
     activeRelay = rindex;
     Buzzer::beep();
@@ -191,28 +227,21 @@ namespace RF {
 bool begin() {
   // Configure RF data pin as plain INPUT (no pull-up - SYN480R has its own output driver)
   pinMode(PIN_RF_DATA, INPUT);
-  
+
   // Verify the pin supports interrupts
   int8_t interruptNum = digitalPinToInterrupt(PIN_RF_DATA);
   if (interruptNum == NOT_AN_INTERRUPT) {
     Serial.println("[RF] ERROR: PIN_RF_DATA does not support interrupts!");
     return false;
   }
-  
+
   // Configure rc-switch with more tolerant settings for better compatibility
   g_rc.enableReceive(interruptNum);
-  
+
   // Set receive tolerance (default is 60, increase for noisy/marginal signals)
   // Higher values = more tolerant of timing variations
   g_rc.setReceiveTolerance(80);
-  
-  // Optional: Enable specific protocols if you know which one your remote uses
-  // Uncomment and adjust if you want to filter protocols:
-  // g_rc.enableReceive(interruptNum);
-  // g_rc.disableReceive();
-  // g_rc.setProtocol(1); // Enable only protocol 1
-  // g_rc.enableReceive(interruptNum);
-  
+
   loadPrefs();
   g_last_activity_ms = millis();
   Serial.println("[RF] Initialized successfully");
@@ -241,7 +270,7 @@ void service() {
 
   int candidate = -1; uint32_t candScore = 0xFFFFFFFFu;
   // Prefer exact signature matches; if multiple, pick closest by score
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < NUM_RF_SLOTS; ++i) {
     if (g_learn[i].sig != 0 && g_learn[i].sig == sig) {
       uint32_t sc = scoreOf(i);
       if (sc < candScore) { candScore = sc; candidate = i; }
@@ -252,7 +281,7 @@ void service() {
   if (candidate < 0) {
     // Coarse fallback: require single close match
     int coarseIdx = -1; uint32_t bestSc = 0xFFFFFFFFu; int matches = 0;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < NUM_RF_SLOTS; ++i) {
       if (g_learn[i].sig == 0) continue;
       uint32_t dsum = (g_learn[i].sum > sum) ? (g_learn[i].sum - sum) : (sum - g_learn[i].sum);
       uint16_t glen = g_learn[i].len;
@@ -282,8 +311,6 @@ void service() {
         g_agg.coarseVotes[candidate] = (uint8_t)(newVotes > 255 ? 255 : newVotes);
       }
     }
-  } else {
-    // no candidate; do not extend lastMs so quiet gap can be detected
   }
 }
 
@@ -294,14 +321,15 @@ bool isPresent() {
 }
 
 // Learning: require two consistent captures (within 2s) and decent fingerprint.
+// relayIndex: 0-5 = relay channels, 6 = CYCLE button, 7 = ALL OFF button
 bool learn(int relayIndex) {
   if (relayIndex < 0) relayIndex = 0;
-  if (relayIndex > 5) relayIndex = 5;
+  if (relayIndex >= NUM_RF_SLOTS) relayIndex = NUM_RF_SLOTS - 1;
   uint32_t deadline = millis() + 8000;
   uint32_t lastSig = 0, lastSum = 0, lastAt = 0;
   uint16_t lastLen = 0;
-  
-  Serial.printf("[RF] Learning for relay %d (press button now)...\n", relayIndex);
+
+  Serial.printf("[RF] Learning for slot %d (press button now)...\n", relayIndex);
 
   while (millis() < deadline) {
     uint32_t sig, sum; uint16_t len;
@@ -339,9 +367,7 @@ bool learn(int relayIndex) {
 }
 
 bool clearAll() {
-  // Clear all learned codes
-
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < NUM_RF_SLOTS; ++i) {
     g_learn[i].sig = 0;
     g_learn[i].sum = 0;
     g_learn[i].len = 0;
@@ -357,7 +383,7 @@ int8_t getActiveRelay() {
 
 void reset() {
   // Turn off all RF-controlled relays and clear active state
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < (int)R_COUNT; ++i) {
     relayOff((RelayIndex)i);
   }
   activeRelay = -1;
