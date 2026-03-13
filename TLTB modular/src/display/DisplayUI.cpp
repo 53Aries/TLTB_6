@@ -887,15 +887,14 @@ bool DisplayUI::handleMenuSelect(int idx){
       auto drawSel = [&](int s){
         _tft->fillRect(0,20,160,16,ST77XX_BLACK);
         _tft->setCursor(6,24);
-        if (s==3) {
-          _tft->print("TAIL");
-        } else if (s==4) {
-          _tft->print(getUiMode()==1?"REV":"MARKER");
-        } else if (s==5) {
-          _tft->print(getUiMode()==1?"Ele Brakes":"AUX");
-        } else {
-          _tft->print(s==0?"LEFT":s==1?"RIGHT":s==2?"BRAKE":"?");
-        }
+        if      (s==0) _tft->print("LEFT");
+        else if (s==1) _tft->print("RIGHT");
+        else if (s==2) _tft->print("BRAKE");
+        else if (s==3) _tft->print("TAIL");
+        else if (s==4) _tft->print(getUiMode()==1?"REV":"MARKER");
+        else if (s==5) _tft->print(getUiMode()==1?"Ele Brakes":"AUX");
+        else if (s==6) _tft->print("CYCLE");
+        else if (s==7) _tft->print("ALL OFF");
       };
 
       drawSel(sel);
@@ -905,7 +904,7 @@ bool DisplayUI::handleMenuSelect(int idx){
       while(!exitRF){
         int8_t dd = readStep();
         if (dd) {
-          sel = ((sel + dd) % 6 + 6) % 6;
+          sel = ((sel + dd) % 8 + 8) % 8;
         }
         if (sel != lastSel) { drawSel(sel); lastSel = sel; }
 
