@@ -44,7 +44,7 @@ static Telemetry tele{};                   // Telemetry data
 static TltbBleService g_bleService;        // BLE service
 static uint32_t g_faultMask = 0;           // Active fault flags
 
-// Startup guard: prevents relay activation until 1p8t switch is cycled to OFF
+// Startup guard: prevents relay activation until all switches are released after boot
 static bool g_startupGuard = false;
 
 // BLE relay tracking: which relay was last activated via BLE (-1 = none)
@@ -111,108 +111,106 @@ static bool okPressedEdge(){
 }
 static bool backPressed(){ return (digitalRead(PIN_ENC_BACK) == LOW); }
 
-// ---------------- Rotary selector ----------------
-enum RotaryMode {
-  MODE_ALL_OFF = 0,   // P1
-  MODE_RF_ENABLE,     // P2
-  MODE_LEFT,          // P3
-  MODE_RIGHT,         // P4
-  MODE_BRAKE,         // P5
-  MODE_TAIL,          // P6
-  MODE_MARKER,        // P7
-  MODE_AUX            // P8
-};
-// Track stable rotary mode to avoid false triggers when switch is between detents
-static RotaryMode g_stableRotaryMode = MODE_ALL_OFF;
+// ---------------- Independent switches ----------------
 
-static RotaryMode readRotary() {
-  // Inputs are PULLUP, so LOW = active position
-  if (digitalRead(PIN_ROT_P1) == LOW) return MODE_ALL_OFF;
-  if (digitalRead(PIN_ROT_P2) == LOW) return MODE_RF_ENABLE;
-  if (digitalRead(PIN_ROT_P3) == LOW) return MODE_LEFT;
-  if (digitalRead(PIN_ROT_P4) == LOW) return MODE_RIGHT;
-  if (digitalRead(PIN_ROT_P5) == LOW) return MODE_BRAKE;
-  if (digitalRead(PIN_ROT_P6) == LOW) return MODE_TAIL;
-  if (digitalRead(PIN_ROT_P7) == LOW) return MODE_MARKER;
-  if (digitalRead(PIN_ROT_P8) == LOW) return MODE_AUX;
-  return MODE_ALL_OFF; // fallback if between detents or no input
+// Returns true if any hardware relay switch is currently pressed (active-LOW)
+static bool anyHwSwitch() {
+  return digitalRead(PIN_SW1_LH)    == LOW ||
+         digitalRead(PIN_SW2_RH)    == LOW ||
+         digitalRead(PIN_SW3_BRAKE) == LOW ||
+         digitalRead(PIN_SW4_TAIL)  == LOW ||
+         digitalRead(PIN_SW5_MARK)  == LOW ||
+         digitalRead(PIN_SW6_AUX)   == LOW;
 }
 
-static void enforceRotaryMode(RotaryMode m) {
-  // Startup guard: keep all relays OFF until 1p8t is cycled to OFF position
+// Enforce relay states based on hardware switches each loop iteration.
+// Hardware switches take full priority. When no switches are active, BLE commands persist.
+// SW7 CYCLE takes exclusive control: cycles LH→RH→Brake→Tail→Mark→AUX at 5s each.
+static void enforceSwitchState() {
+  // Startup guard: hold all relays off until ALL switches (including CYCLE) are released
   if (g_startupGuard) {
-    // Clear guard when rotary is moved to OFF position
-    if (m == MODE_ALL_OFF) {
-      g_startupGuard = false;
-    }
-    // Keep all relays OFF while guard is active
+    if (!anyHwSwitch() && digitalRead(PIN_SW7_CYCLE) == HIGH) g_startupGuard = false;
     for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
     return;
   }
 
-  // Protection fault override: if any fault is latched, keep all relays OFF regardless of rotary position
+  // Protection fault override: keep all relays OFF if any fault is latched
   if (protector.isLvpLatched() || protector.isOcpLatched() || protector.isOutvLatched() || protector.isRelayCoilLatched()) {
     for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
     return;
   }
 
-  // Normal operation: In all non-RF modes, we *force* the relay states each loop.
-  // This guarantees RF is effectively ignored unless in MODE_RF_ENABLE.
-  auto allOff = [](){
-    // Turn off all output relays
-    for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
-  };
+  static bool     s_hwWasActive  = false;
+  static int      s_cycleIdx     = 0;
+  static uint32_t s_cycleStartMs = 0;
 
-  // Clear BLE active relay tracking when not in RF mode
-  // (BLE can only control relays in RF mode, so this keeps display accurate)
-  if (m != MODE_RF_ENABLE) {
+  bool swCycle = (digitalRead(PIN_SW7_CYCLE) == LOW);
+
+  if (swCycle) {
+    // Initialize on first press
+    if (s_cycleStartMs == 0) {
+      s_cycleIdx     = 0;
+      s_cycleStartMs = millis();
+      if (s_cycleStartMs == 0) s_cycleStartMs = 1; // guard against 0 sentinel
+      protector.suppressOcpUntil(millis() + 700);   // suppress OCP on first relay activation
+    }
+    // Advance to next relay after 5 seconds
+    if (millis() - s_cycleStartMs >= 5000) {
+      s_cycleIdx = (s_cycleIdx + 1) % (int)R_COUNT;
+      s_cycleStartMs = millis();
+      if (s_cycleStartMs == 0) s_cycleStartMs = 1;
+      protector.suppressOcpUntil(millis() + 700);   // suppress OCP on each relay transition
+    }
+    // Drive only the current cycle relay, all others off
     g_bleActiveRelay = -1;
+    s_hwWasActive    = false;
+    for (int i = 0; i < (int)R_COUNT; ++i) {
+      (i == s_cycleIdx) ? relayOn((RelayIndex)i) : relayOff((RelayIndex)i);
+    }
+    return;
   }
 
-  switch (m) {
-    case MODE_ALL_OFF:
-      #ifndef DEV_MODE
-      allOff();
-      #endif
-      break;
+  // CYCLE just released: clear all relays and reset state
+  if (s_cycleStartMs != 0) {
+    for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
+    s_cycleStartMs = 0;
+  }
 
-    case MODE_RF_ENABLE:
-      // Do not force anything; RF subsystem may control relays.
-      break;
+  bool swLH    = (digitalRead(PIN_SW1_LH)    == LOW);
+  bool swRH    = (digitalRead(PIN_SW2_RH)    == LOW);
+  bool swBrake = (digitalRead(PIN_SW3_BRAKE) == LOW);
+  bool swTail  = (digitalRead(PIN_SW4_TAIL)  == LOW);
+  bool swMark  = (digitalRead(PIN_SW5_MARK)  == LOW);
+  bool swAux   = (digitalRead(PIN_SW6_AUX)   == LOW);
+  bool anyHw   = swLH || swRH || swBrake || swTail || swMark || swAux;
 
-    case MODE_LEFT:
-      allOff(); relayOn(R_LEFT);
-      break;
+  if (anyHw) {
+    s_hwWasActive = true;
+    g_bleActiveRelay = -1; // hardware takes over, clear BLE tracking
 
-    case MODE_RIGHT:
-      allOff(); relayOn(R_RIGHT);
-      break;
+    // RV mode: brake switch activates L+R instead of BRAKE output
+    bool wantLH    = swLH;
+    bool wantRH    = swRH;
+    bool wantBrake = swBrake;
+    if (swBrake && getUiMode() == 1) {
+      wantLH    = true;
+      wantRH    = true;
+      wantBrake = false;
+    }
 
-    case MODE_BRAKE:
-      allOff();
-      if (getUiMode() == 1) { // RV
-        relayOn(R_LEFT); relayOn(R_RIGHT);
-      } else {
-        relayOn(R_BRAKE);
-      }
-      break;
-
-    case MODE_TAIL:
-      allOff(); relayOn(R_TAIL);
-      break;
-
-    case MODE_MARKER:
-      allOff(); relayOn(R_MARKER);
-      break;
-
-    case MODE_AUX:
-      allOff();
-      if (getUiMode() == 1) { // RV
-        relayOn(R_AUX);
-      } else {
-        relayOn(R_AUX);
-      }
-      break;
+    wantLH    ? relayOn(R_LEFT)   : relayOff(R_LEFT);
+    wantRH    ? relayOn(R_RIGHT)  : relayOff(R_RIGHT);
+    wantBrake ? relayOn(R_BRAKE)  : relayOff(R_BRAKE);
+    swTail    ? relayOn(R_TAIL)   : relayOff(R_TAIL);
+    swMark    ? relayOn(R_MARKER) : relayOff(R_MARKER);
+    swAux     ? relayOn(R_AUX)    : relayOff(R_AUX);
+  } else {
+    if (s_hwWasActive) {
+      // Transition: hardware just released — clear all relays so BLE starts clean
+      for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
+      s_hwWasActive = false;
+    }
+    // No hardware switches active — BLE relay commands persist
   }
 }
 
@@ -231,14 +229,8 @@ static uint32_t computeFaultMask(){
 
 static bool bleCanDriveRelays() {
   if (g_startupGuard) return false;
-  // Allow BLE control in RF mode OR in dev mode (bare ESP32 without rotary hardware)
-  #ifdef DEV_MODE
-  if (g_stableRotaryMode != MODE_RF_ENABLE && g_stableRotaryMode != MODE_ALL_OFF) {
-    return false;
-  }
-  #else
-  if (g_stableRotaryMode != MODE_RF_ENABLE) return false;
-  #endif
+  if (anyHwSwitch()) return false;                       // relay switches take priority
+  if (digitalRead(PIN_SW7_CYCLE) == LOW) return false;  // CYCLE takes priority
   if (protector.isLvpLatched() || protector.isOcpLatched() || protector.isOutvLatched() || protector.isRelayCoilLatched()) return false;
   return true;
 }
@@ -246,8 +238,8 @@ static bool bleCanDriveRelays() {
 static void handleBleRelayCommand(RelayIndex idx, bool desiredOn) {
   Serial.printf("[BLE] Relay command received: idx=%d, desiredOn=%d\n", (int)idx, desiredOn);
   if (!bleCanDriveRelays()) {
-    Serial.printf("[BLE] Relay control blocked - startupGuard=%d, rotaryMode=%d (need %d for RF), lvp=%d, ocp=%d, outv=%d\n",
-      g_startupGuard, (int)g_stableRotaryMode, (int)MODE_RF_ENABLE,
+    Serial.printf("[BLE] Relay control blocked - startupGuard=%d, hwSwitch=%d, lvp=%d, ocp=%d, outv=%d\n",
+      g_startupGuard, anyHwSwitch(),
       protector.isLvpLatched(), protector.isOcpLatched(), protector.isOutvLatched());
     return;
   }
@@ -267,41 +259,37 @@ static void handleBleRelayCommand(RelayIndex idx, bool desiredOn) {
   }
 }
 
-static const char* describeActiveLabel(RotaryMode mode) {
-  if (g_startupGuard) {
-    return "SAFE";
+static const char* relayActiveLabel(int idx) {
+  switch (idx) {
+    case R_LEFT:   return "LEFT";
+    case R_RIGHT:  return "RIGHT";
+    case R_BRAKE:  return "BRAKE";
+    case R_TAIL:   return "TAIL";
+    case R_MARKER: return (getUiMode() == 1) ? "REV"        : "MARK";
+    case R_AUX:    return (getUiMode() == 1) ? "Ele Brakes" : "AUX";
+    default:       return "?";
   }
+}
 
-  // Check if BLE has an active relay - takes priority over rotary position
-  // This allows the display to show what's actually on when controlled via app
+static const char* describeActiveLabel() {
+  if (g_startupGuard) return "SAFE";
+
+  // BLE active relay takes display priority when no hardware switches are in use
   if (g_bleActiveRelay >= (int)R_LEFT && g_bleActiveRelay < (int)R_COUNT) {
-    // Verify the relay is actually still on
     if (relayIsOn(g_bleActiveRelay)) {
-      return relayName(static_cast<RelayIndex>(g_bleActiveRelay));
-    } else {
-      // Relay was turned off by other means, clear tracking
-      g_bleActiveRelay = -1;
+      return relayActiveLabel(g_bleActiveRelay);
     }
+    g_bleActiveRelay = -1;
   }
 
-  switch (mode) {
-    case MODE_LEFT:   return "LEFT";
-    case MODE_RIGHT:  return "RIGHT";
-    case MODE_BRAKE:  return "BRAKE";
-    case MODE_TAIL:   return "TAIL";
-    case MODE_MARKER: return (getUiMode() == 1) ? "REV" : "MARK";
-    case MODE_AUX:    return (getUiMode() == 1) ? "Ele Brakes" : "AUX";
-    case MODE_RF_ENABLE: {
-      int8_t rfRelay = RF::getActiveRelay();
-      if (rfRelay >= (int)R_LEFT && rfRelay < (int)R_COUNT) {
-        return relayName(static_cast<RelayIndex>(rfRelay));
-      }
-      return "RF";
-    }
-    case MODE_ALL_OFF:
-    default:
-      return "OFF";
+  // Count active relays to build the label
+  int activeCount = 0, lastActive = -1;
+  for (int i = 0; i < (int)R_COUNT; ++i) {
+    if (relayIsOn(i)) { activeCount++; lastActive = i; }
   }
+  if (activeCount == 0) return "OFF";
+  if (activeCount == 1) return relayActiveLabel(lastActive);
+  return "MULTI";
 }
 
 // ---------------- setup/loop ----------------
@@ -342,20 +330,19 @@ void setup() {
 
   attachInterrupt(digitalPinToInterrupt(PIN_ENC_A), enc_isrA, RISING);
 
-  // Rotary switch pins
-  pinMode(PIN_ROT_P1, INPUT_PULLUP);
-  pinMode(PIN_ROT_P2, INPUT_PULLUP);
-  pinMode(PIN_ROT_P3, INPUT_PULLUP);
-  pinMode(PIN_ROT_P4, INPUT_PULLUP);
-  pinMode(PIN_ROT_P5, INPUT_PULLUP);
-  pinMode(PIN_ROT_P6, INPUT_PULLUP);
-  pinMode(PIN_ROT_P7, INPUT_PULLUP);
-  pinMode(PIN_ROT_P8, INPUT_PULLUP);
+  // Independent switch pins (active-LOW, external pull-ups — no internal pullup)
+  pinMode(PIN_SW1_LH,    INPUT);
+  pinMode(PIN_SW2_RH,    INPUT);
+  pinMode(PIN_SW3_BRAKE, INPUT);
+  pinMode(PIN_SW4_TAIL,  INPUT);
+  pinMode(PIN_SW5_MARK,  INPUT);
+  pinMode(PIN_SW6_AUX,   INPUT);
+  pinMode(PIN_SW7_CYCLE, INPUT);
 
-  // Startup guard: if 1p8t is not in OFF position (P1), require cycling to OFF first
+  // Startup guard: if any switch (including CYCLE) is active at boot, hold relays off until all released
   delay(10); // Allow pins to settle
-  if (digitalRead(PIN_ROT_P1) != LOW) {
-    g_startupGuard = true; // Guard is active until cycled to OFF
+  if (anyHwSwitch() || digitalRead(PIN_SW7_CYCLE) == LOW) {
+    g_startupGuard = true;
   }
 
   // Relays safe init
@@ -751,29 +738,27 @@ void loop() {
           // Footer instruction
           tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Rotate to OFF to restart");
+          tft->setCursor(6, 112); tft->print("Release switches to restart");
         }
-        // Block until OFF is detected (debounced); keep relays off and extend suppression
+        // Block until all switches released (debounced); keep relays off
         {
           uint32_t offStableStart = 0;
           while (true) {
-            RotaryMode m = readRotary();
             for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
-            if (m == MODE_ALL_OFF) {
+            if (!anyHwSwitch()) {
               if (offStableStart == 0) offStableStart = millis();
-              // Require OFF to be held stable for at least 300ms
               if (millis() - offStableStart >= 300) break;
             } else {
-              offStableStart = 0; // reset stability if moved away
+              offStableStart = 0;
             }
             delay(10);
           }
         }
-        // OFF detected: authorize and clear OCP latch; allow resume
+        // All switches released: authorize and clear OCP latch; allow resume
         protector.setOcpClearAllowed(true);
         protector.clearOcpLatch();
         protector.setOcpHold(false);
-        g_startupGuard = false; // guard will also clear in enforceRotaryMode when OFF seen
+        g_startupGuard = false;
         tele.ocpLatched = false;
         ocpAcked = true;  // suppress further pop-ups until fault truly resolves
         // Ensure the Home screen fully repaints after leaving blocking modal
@@ -796,7 +781,7 @@ void loop() {
   ui->setFaultMask(g_faultMask);
   
   // Update display with current active label (includes BLE tracking)
-  ui->setActiveLabel(describeActiveLabel(g_stableRotaryMode));
+  ui->setActiveLabel(describeActiveLabel());
   
   ui->tick(tele);
 
@@ -820,25 +805,23 @@ void loop() {
           // Footer instruction
           tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Rotate to OFF to restart");
+          tft->setCursor(6, 112); tft->print("Release switches to restart");
         }
-        // Block until OFF is detected (debounced); keep relays off
+        // Block until all switches released (debounced); keep relays off
         {
           uint32_t offStableStart = 0;
           while (true) {
-            RotaryMode m = readRotary();
             for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
-            if (m == MODE_ALL_OFF) {
+            if (!anyHwSwitch()) {
               if (offStableStart == 0) offStableStart = millis();
-              // Require OFF to be held stable for at least 300ms
               if (millis() - offStableStart >= 300) break;
             } else {
-              offStableStart = 0; // reset stability if moved away
+              offStableStart = 0;
             }
             delay(10);
           }
         }
-        // OFF detected: clear OUTV latch; allow resume
+        // All switches released: clear OUTV latch; allow resume
         protector.clearOutvLatch();
         tele.outvLatched = false;
         outvAcked = true;  // suppress further pop-ups until fault truly resolves
@@ -888,25 +871,23 @@ void loop() {
           // Footer instruction
           tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Rotate to OFF to restart");
+          tft->setCursor(6, 112); tft->print("Release switches to restart");
         }
-        // Block until OFF is detected (debounced); keep relays off
+        // Block until all switches released (debounced); keep relays off
         {
           uint32_t offStableStart = 0;
           while (true) {
-            RotaryMode m = readRotary();
             for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
-            if (m == MODE_ALL_OFF) {
+            if (!anyHwSwitch()) {
               if (offStableStart == 0) offStableStart = millis();
-              // Require OFF to be held stable for at least 300ms
               if (millis() - offStableStart >= 300) break;
             } else {
-              offStableStart = 0; // reset stability if moved away
+              offStableStart = 0;
             }
             delay(10);
           }
         }
-        // OFF detected: clear relay coil latch; allow resume
+        // All switches released: clear relay coil latch; allow resume
         protector.clearRelayCoilLatch();
         g_startupGuard = false;
         tele.relayCoilLatched = false;
@@ -944,25 +925,23 @@ void loop() {
           // Footer instruction
           tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Rotate to OFF to restart");
+          tft->setCursor(6, 112); tft->print("Release switches to restart");
         }
-        // Block until OFF is detected (debounced); keep relays off
+        // Block until all switches released (debounced); keep relays off
         {
           uint32_t offStableStart = 0;
           while (true) {
-            RotaryMode m = readRotary();
             for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
-            if (m == MODE_ALL_OFF) {
+            if (!anyHwSwitch()) {
               if (offStableStart == 0) offStableStart = millis();
-              // Require OFF to be held stable for at least 300ms
               if (millis() - offStableStart >= 300) break;
             } else {
-              offStableStart = 0; // reset stability if moved away
+              offStableStart = 0;
             }
             delay(10);
           }
         }
-        // OFF detected: clear LVP latch; allow resume
+        // All switches released: clear LVP latch; allow resume
         protector.clearLvpLatch();
         tele.lvpLatched = false;
         lvpAcked = true;  // suppress further pop-ups until fault truly resolves
@@ -982,28 +961,25 @@ void loop() {
   // OTA validation disabled - using simple OTA
   // (Rollback protection removed to fix OTA data partition corruption)
 
-  // Let RF run, but we will enforce rotary below unless in MODE_RF_ENABLE
   RF::service();
 
-  // Rotary has final say unless P2 (RF enabled)
-  static RotaryMode s_prevMode = readRotary();
-  RotaryMode curMode = readRotary();
-  if (curMode != s_prevMode) {
-    // On any mode change, suppress OCP for a short window to avoid false trips during relay transitions
-    protector.suppressOcpUntil(millis() + 700); // tune 500–800ms as needed
-    
-    // Reset RF state when entering or exiting RF mode
-    if (curMode == MODE_RF_ENABLE || s_prevMode == MODE_RF_ENABLE) {
-      RF::reset();
-    }
-    
-    s_prevMode = curMode;
-    // Only update stable mode for actual position changes, not fallback between-detent reads
-    if (curMode != MODE_ALL_OFF || s_prevMode == MODE_ALL_OFF) {
-      g_stableRotaryMode = curMode;
+  // Suppress OCP briefly on any switch state change to avoid false trips during relay transitions
+  {
+    static uint8_t s_prevSwMask = 0;
+    uint8_t curSwMask =
+      ((digitalRead(PIN_SW1_LH)    == LOW) ? 0x01 : 0) |
+      ((digitalRead(PIN_SW2_RH)    == LOW) ? 0x02 : 0) |
+      ((digitalRead(PIN_SW3_BRAKE) == LOW) ? 0x04 : 0) |
+      ((digitalRead(PIN_SW4_TAIL)  == LOW) ? 0x08 : 0) |
+      ((digitalRead(PIN_SW5_MARK)  == LOW) ? 0x10 : 0) |
+      ((digitalRead(PIN_SW6_AUX)   == LOW) ? 0x20 : 0) |
+      ((digitalRead(PIN_SW7_CYCLE) == LOW) ? 0x40 : 0);
+    if (curSwMask != s_prevSwMask) {
+      protector.suppressOcpUntil(millis() + 700);
+      s_prevSwMask = curSwMask;
     }
   }
-  enforceRotaryMode(curMode);
+  enforceSwitchState();
 
   BleStatusContext bleCtx{};
   bleCtx.telemetry = tele;
@@ -1011,7 +987,7 @@ void loop() {
   bleCtx.startupGuard = g_startupGuard;
   bleCtx.lvpBypass = protector.lvpBypass();
   bleCtx.outvBypass = protector.outvBypass();
-  bleCtx.activeLabel = describeActiveLabel(g_stableRotaryMode);
+  bleCtx.activeLabel = describeActiveLabel();
   bleCtx.timestampMs = millis();
   bleCtx.uiMode = getUiMode();
   for (int i = 0; i < (int)R_COUNT; ++i) {

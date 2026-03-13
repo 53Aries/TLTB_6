@@ -26,16 +26,14 @@
 #define PIN_FSPI_SCK    38  // SCL - Physical pin 31 (IO38 - safe GPIO)
 #define PIN_FSPI_MISO   21  // Physical pin 23 (IO21 - not used by display, bottom edge)
 
-// ======================= Rotary 1P8T Mode Selector =======================
-// Left side cluster: pins 4-11 on WROOM-1 module (safe GPIOs)
-#define PIN_ROT_P1      5   // All Off       - Physical pin 5 (IO5)
-#define PIN_ROT_P2      6   // RF Enable     - Physical pin 6 (IO6)
-#define PIN_ROT_P3      7   // Left          - Physical pin 7 (IO7)
-#define PIN_ROT_P4      15  // Right         - Physical pin 8 (IO15)
-#define PIN_ROT_P5      16  // Brake         - Physical pin 9 (IO16)
-#define PIN_ROT_P6      17  // Tail          - Physical pin 10 (IO17)
-#define PIN_ROT_P7      18  // Marker        - Physical pin 11 (IO18)
-#define PIN_ROT_P8      8   // Aux           - Physical pin 12 (IO8)
+// ======================= Input Switches (active-LOW, external pull-ups) =======================
+#define PIN_SW1_LH      4   // Left Turn     - Physical pin 4 (IO4)
+#define PIN_SW2_RH      5   // Right Turn    - Physical pin 5 (IO5)
+#define PIN_SW3_BRAKE   6   // Brake         - Physical pin 6 (IO6)
+#define PIN_SW4_TAIL    7   // Tail          - Physical pin 7 (IO7)
+#define PIN_SW5_MARK    15  // Marker        - Physical pin 8 (IO15)
+#define PIN_SW6_AUX     16  // Auxiliary     - Physical pin 9 (IO16)
+#define PIN_SW7_CYCLE   17  // Cycle (reserved) - Physical pin 10 (IO17)
 
 // ======================= I²C Bus (INA226 modules) =======================
 // Bottom corner: pins 24-25 on WROOM-1 module (safe GPIOs with I2C support)

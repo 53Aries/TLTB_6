@@ -132,10 +132,15 @@ namespace {
     g_prefs.putUShort(key, g_learn[i].len);
   }
 
-  // Check if RF mode is enabled (1P8T switch in position P2)
+  // RF mode is active when all hardware switches (including CYCLE) are released
   static bool isRfModeEnabled() {
-    // PIN_ROT_P2 is LOW when RF mode is selected (INPUT_PULLUP)
-    return (digitalRead(PIN_ROT_P2) == LOW);
+    return digitalRead(PIN_SW1_LH)    == HIGH &&
+           digitalRead(PIN_SW2_RH)    == HIGH &&
+           digitalRead(PIN_SW3_BRAKE) == HIGH &&
+           digitalRead(PIN_SW4_TAIL)  == HIGH &&
+           digitalRead(PIN_SW5_MARK)  == HIGH &&
+           digitalRead(PIN_SW6_AUX)   == HIGH &&
+           digitalRead(PIN_SW7_CYCLE) == HIGH;
   }
 
   // Activate relay with exclusivity

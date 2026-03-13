@@ -57,106 +57,17 @@ static const uint16_t COLOR_DARKGREY = 0x4208; // 16-bit RGB565 approx dark gray
 // Relay labels (legacy helper)
 // (legacy helper removed; relay labels are handled contextually where needed)
 
-// ===================== Debounced 1P8T =====================
-// Read raw mask of 1P8T inputs (LOW = selected)
-static uint8_t readRotRaw() {
-  uint8_t m = 0;
-  if (digitalRead(PIN_ROT_P1) == LOW) m |= (1 << 0); // P1: OFF
-  if (digitalRead(PIN_ROT_P2) == LOW) m |= (1 << 1); // P2: RF
-  if (digitalRead(PIN_ROT_P3) == LOW) m |= (1 << 2); // P3: LEFT
-  if (digitalRead(PIN_ROT_P4) == LOW) m |= (1 << 3); // P4: RIGHT
-  if (digitalRead(PIN_ROT_P5) == LOW) m |= (1 << 4); // P5: BRAKE
-  if (digitalRead(PIN_ROT_P6) == LOW) m |= (1 << 5); // P6: TAIL
-  if (digitalRead(PIN_ROT_P7) == LOW) m |= (1 << 6); // P7: MARK
-  if (digitalRead(PIN_ROT_P8) == LOW) m |= (1 << 7); // P8: AUX
-  return m;
-}
-
-// Classify mask -> index [-2=N/A (no or multiple), 0..7 = P1..P8]
-static int classifyMask(uint8_t m) {
-  if (m == 0) return -2;                   // no position -> N/A
-  if ((m & (m - 1)) != 0) return -2;       // multiple positions -> N/A
-  for (int i = 0; i < 8; ++i) if (m & (1 << i)) return i; // exactly one bit set
-  return -2;
-}
-
-// Debounced/hysteretic rotary label (maps to user-specified wording)
-static const char* rotaryLabel() {
-  // Tunables
-  static const uint32_t STABLE_MS = 50;    // must persist before accepting change
-  static const int SAMPLES = 3;            // quick samples per call
-  static const uint32_t SAMPLE_SPACING_MS = 2;
-
-  static int stableIdx = -2;               // accepted index (-2=N/A)
-  static int pendingIdx = -3;              // candidate awaiting stability
-  static uint32_t pendingSince = 0;
-
-  // Majority vote over a few samples
-  int counts[10] = {0}; // 0..7=P1..P8, 8=N/A bucket
-  for (int s = 0; s < SAMPLES; ++s) {
-    int idx = classifyMask(readRotRaw());
-    counts[(idx >= 0) ? idx : 8]++;
-    if (SAMPLES > 1 && s + 1 < SAMPLES) delay(SAMPLE_SPACING_MS);
-  }
-  int bestIdx = -1, bestCnt = -1;
-  for (int i = 0; i < 10; ++i) { if (counts[i] > bestCnt) { bestCnt = counts[i]; bestIdx = i; } }
-  int votedIdx = (bestIdx == 8) ? -2 : bestIdx;
-
-  uint32_t now = millis();
-  if (votedIdx != stableIdx) {
-    if (votedIdx != pendingIdx) { pendingIdx = votedIdx; pendingSince = now; }
-    if (now - pendingSince >= STABLE_MS) { stableIdx = pendingIdx; }
-  } else {
-    pendingIdx = stableIdx; pendingSince = now;
-  }
-
-  switch (stableIdx) {
-    case -2: return "N/A";   // undefined or invalid
-    case 0:  return "OFF";   // P1
-    case 1:  return "RF";    // P2
-    case 2:  return "LEFT";  // P3
-    case 3:  return "RIGHT"; // P4
-    case 4:  return "BRAKE"; // P5 - BRAKE in both modes
-    case 5:  return "TAIL";  // P6
-    case 6:  return (getUiMode()==1? "REV" : "MARK");  // P7 - REV in RV mode
-    case 7:  return (getUiMode()==1? "Ele Brakes" : "AUX"); // P8 - Ele Brakes in RV mode
-    default: return "N/A";
-  }
-}
 
 // ACTIVE line mirrors rotary intent (deterministic & safe)
 static String g_activeLabelOverride = ""; // Override from main.cpp (for BLE)
 
 static void getActiveRelayStatus(String& out){
-  // If main.cpp set an override (e.g., for BLE control), use it
+  // Active label is always set by main.cpp via setActiveLabel()
   if (g_activeLabelOverride.length() > 0) {
     out = g_activeLabelOverride;
     return;
   }
-  
-  const char* rot = rotaryLabel();
-  if (!strcmp(rot, "OFF")) { out = "None"; return; }
-  if (!strcmp(rot, "N/A")) { out = "N/A";  return; }
-
-  // If we're in RF mode, check what the RF module says is active
-  if (!strcmp(rot, "RF")) {
-    int8_t rfActive = RF::getActiveRelay();
-    if (rfActive == -1) {
-      out = "RF"; return;
-    }
-    // RF has an active relay - display it with mode-aware naming
-    switch (rfActive) {
-      case R_LEFT:   out = "LEFT";  return;
-      case R_RIGHT:  out = "RIGHT"; return;
-      case R_BRAKE:  out = "BRAKE"; return;
-      case R_TAIL:   out = "TAIL";  return;
-      case R_MARKER: out = (getUiMode()==1? "REV" : "MARK");  return;
-      case R_AUX:    out = (getUiMode()==1? "Ele Brakes" : "AUX"); return;
-      default:       out = "RF"; return;
-    }
-  }
-
-  out = rot;
+  out = "OFF";
 }
 
 // ================================================================
@@ -200,16 +111,6 @@ void DisplayUI::begin(Preferences& p){
   _okHolding = false;
   _okHoldLong = false;
   _okDownMs = 0;
-
-  // Ensure 1P8T inputs are not floating: use internal pull-ups (selected = LOW)
-  pinMode(PIN_ROT_P1, INPUT_PULLUP);
-  pinMode(PIN_ROT_P2, INPUT_PULLUP);
-  pinMode(PIN_ROT_P3, INPUT_PULLUP);
-  pinMode(PIN_ROT_P4, INPUT_PULLUP);
-  pinMode(PIN_ROT_P5, INPUT_PULLUP);
-  pinMode(PIN_ROT_P6, INPUT_PULLUP);
-  pinMode(PIN_ROT_P7, INPUT_PULLUP);
-  pinMode(PIN_ROT_P8, INPUT_PULLUP);
 
   // Apply brightness at max (menu removed; keep at full by default)
   if (_setBrightness) _setBrightness(255);
@@ -843,15 +744,12 @@ DisplayUI::OkPressEvent DisplayUI::pollHomeOkPress(){
 void DisplayUI::tick(const Telemetry& t){
   static bool wasInMenu = false;   // ========== NEW: track menu->home transition ==========
 
-  // Detect rotary/ACTIVE changes to force a refresh
+  // Detect ACTIVE label changes to force a refresh
   static String s_prevActive;
-  static String s_prevRotary;
   String curActive; getActiveRelayStatus(curActive);
-  String curRotary = rotaryLabel();
-  if (curActive != s_prevActive || curRotary != s_prevRotary) {
+  if (curActive != s_prevActive) {
     _needRedraw = true;
     s_prevActive = curActive;
-    s_prevRotary = curRotary;
   }
 
   int8_t d  = readStep();

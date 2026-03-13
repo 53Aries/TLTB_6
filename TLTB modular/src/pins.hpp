@@ -24,15 +24,14 @@
 // Encoder OK button active level (hardware drives HIGH when pressed)
 #define ENC_OK_ACTIVE_LEVEL LOW
 
-// ======================= Rotary 1P8T Mode Selector =======================
-#define PIN_ROT_P1      4  // All Off
-#define PIN_ROT_P2      5  // RF Enable
-#define PIN_ROT_P3      6  // Left
-#define PIN_ROT_P4      7  // Right
-#define PIN_ROT_P5      15  // Brake
-#define PIN_ROT_P6      16  // Tail
-#define PIN_ROT_P7      17  // Marker
-#define PIN_ROT_P8      18  // Aux
+// ======================= Input Switches (active-LOW, external pull-ups) =======================
+#define PIN_SW1_LH      4   // Left Turn
+#define PIN_SW2_RH      5   // Right Turn
+#define PIN_SW3_BRAKE   6   // Brake
+#define PIN_SW4_TAIL    7   // Tail
+#define PIN_SW5_MARK    15  // Marker
+#define PIN_SW6_AUX     16  // Auxiliary
+#define PIN_SW7_CYCLE   17  // Cycle (reserved — not yet implemented)
 
 // ======================= I²C Bus (INA226 modules) =======================
 #define PIN_I2C_SDA     47
