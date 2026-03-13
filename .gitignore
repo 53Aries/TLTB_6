@@ -1,0 +1,39 @@
+# PlatformIO (TLTB modular)
+TLTB modular/.pio/
+TLTB modular/.vscode/.browse.c_cpp.db*
+TLTB modular/.vscode/c_cpp_properties.json
+TLTB modular/.vscode/launch.json
+TLTB modular/.vscode/ipch
+
+# Node / Expo (TLTB App)
+TLTB App/node_modules/
+TLTB App/.expo/
+TLTB App/dist/
+TLTB App/web-build/
+TLTB App/expo-env.d.ts
+TLTB App/.metro-health-check*
+TLTB App/.kotlin/
+TLTB App/ios/
+TLTB App/android/
+
+# Build artifacts
+*.apk
+*.aab
+*.tsbuildinfo
+
+# Secrets & certs
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env*.local
+
+# Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS
+.DS_Store
