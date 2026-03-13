@@ -68,9 +68,14 @@ static constexpr float HIGH_CURRENT_THRESHOLD = 20.5f;     // Current threshold 
 // =============================================================================
 // INA226 ALERT Pin ISR (Short Circuit Detection)
 // =============================================================================
-// ALERT pin triggers on extreme overcurrent (>30A) before buck shuts down
-// ISR writes flag to NVS immediately for detection on next boot
+// ALERT pin triggers on extreme overcurrent (>30A).
+// ESP32 remains powered (source battery); ISR flags the event so the main loop
+// can disable the buck via PIN_BUCK_EN and log to NVS.
 static volatile bool g_alertTriggered = false;
+
+// True when buck was disabled by an extreme overcurrent (ALERT) event.
+// Buck is re-enabled after the OCP fault is acknowledged and cleared.
+static bool g_buckDisabled = false;
 
 void IRAM_ATTR ina_alert_isr() {
   g_alertTriggered = true;
@@ -345,8 +350,12 @@ void setup() {
     g_startupGuard = true;
   }
 
-  // Relays safe init
+  // Relays safe init (all OFF before enabling buck)
   relaysBegin();
+
+  // Buck converter enable - bring output up after relays are confirmed OFF
+  pinMode(PIN_BUCK_EN, OUTPUT);
+  digitalWrite(PIN_BUCK_EN, HIGH);
 
   // TFT & encoder/buttons pins
   // TFT backlight not used - display runs without it (GPIO 42 repurposed for INA ALERT)
@@ -578,8 +587,20 @@ void loop() {
   // Write to NVS immediately when alert fires (before buck shutdown)
   if (g_alertTriggered) {
     g_alertTriggered = false;
+
+    // Disable buck immediately - ESP32 stays powered from source battery
+    digitalWrite(PIN_BUCK_EN, LOW);
+    g_buckDisabled = true;
+
+    // Bypass OUTV protection: LOAD INA226 will read ~0V with buck off,
+    // which would otherwise false-trip the output voltage fault.
+    protector.setOutvBypass(true);
+
+    // Cut all relays (defense in depth; buck output is now off)
+    for (int i = 0; i < (int)R_COUNT; ++i) relayOff(i);
+
     float current = INA226::PRESENT ? INA226::readCurrentA() : 0.0f;
-    
+
     // Capture which relay was active when short circuit occurred
     int8_t activeRelay = -1;
     for (int i = 0; i < (int)R_COUNT; ++i) {
@@ -588,11 +609,11 @@ void loop() {
         break;  // Take first active relay
       }
     }
-    
+
     prefs.putBool(KEY_SHORT_CIRCUIT, true);
     prefs.putFloat(KEY_EXTREME_I, current);
     prefs.putChar(KEY_SHORT_RELAY, activeRelay);
-    Serial.printf("[ALERT] Short circuit detected! Current=%.1fA, relay=%d, flags written to NVS\n", current, activeRelay);
+    Serial.printf("[ALERT] Extreme overcurrent! Buck disabled. Current=%.1fA, relay=%d, logged to NVS\n", current, activeRelay);
     INA226::clearAlert();  // Clear latch for next detection
   }
   
@@ -605,26 +626,40 @@ void loop() {
   tele.relayCoilA = INA226_SRC::PRESENT ? INA226_SRC::readCurrentA() : NAN;
   
   // Relay health check: verify coil current matches expected state (run every 500ms)
-  static uint32_t lastRelayCheckMs = 0;
-  uint32_t now = millis();
-  if ((now - lastRelayCheckMs) >= 500) {
-    lastRelayCheckMs = now;
-    int expectedRelays = countActiveRelays();
-    bool relayHealthOk = INA226_SRC::verifyRelayCoils(expectedRelays);
-    
-    // Trip relay coil fault if mismatch detected (not already latched)
-    if (!relayHealthOk && !protector.isRelayCoilLatched()) {
-      // Determine which relay (if any) is suspected to be faulty
-      int faultyRelay = -1;
-      // If only one relay should be on, that's the suspect
-      if (expectedRelays == 1) {
-        for (int i = 0; i < (int)R_COUNT; ++i) {
-          if (relayIsOn(i)) { faultyRelay = i; break; }
+  // Skips verification for 150ms after any relay state change to allow coil settle.
+  static uint32_t lastRelayCheckMs  = 0;
+  static uint32_t lastRelayChangeMs = 0;
+  static uint8_t  lastRelayMask     = 0;
+  {
+    uint8_t currentMask = getActiveRelayMask();
+    if (currentMask != lastRelayMask) {
+      lastRelayMask     = currentMask;
+      lastRelayChangeMs = millis(); // relay state just changed; reset settle window
+    }
+  }
+  static constexpr uint32_t COIL_SETTLE_MS = 150; // wait for coil to energize/de-energize
+  {
+    uint32_t now = millis();
+    bool inSettleWindow = (now - lastRelayChangeMs) < COIL_SETTLE_MS;
+
+    if (!inSettleWindow && (now - lastRelayCheckMs) >= 500) {
+      lastRelayCheckMs = now;
+      int expectedRelays = countActiveRelays();
+      bool relayHealthOk = INA226_SRC::verifyRelayCoils(expectedRelays);
+
+      // Trip relay coil fault if mismatch detected (not already latched)
+      if (!relayHealthOk && !protector.isRelayCoilLatched()) {
+        // If only one relay is on, it's the likely suspect
+        int faultyRelay = -1;
+        if (expectedRelays == 1) {
+          for (int i = 0; i < (int)R_COUNT; ++i) {
+            if (relayIsOn(i)) { faultyRelay = i; break; }
+          }
         }
+        Serial.printf("[RELAY] Coil fault: expected %d relays (~%.0fmA), measured %.1fmA\n",
+                      expectedRelays, expectedRelays * 75.0f, tele.relayCoilA * 1000.0f);
+        protector.tripRelayCoil(faultyRelay);
       }
-      Serial.printf("[RELAY] Coil fault detected: expected %d relays (%.1fmA), measured %.1fmA\n",
-                    expectedRelays, expectedRelays * 80.0f, tele.relayCoilA * 1000.0f);
-      protector.tripRelayCoil(faultyRelay);
     }
   }
 
@@ -761,6 +796,19 @@ void loop() {
         g_startupGuard = false;
         tele.ocpLatched = false;
         ocpAcked = true;  // suppress further pop-ups until fault truly resolves
+
+        // Re-enable buck if it was shut down by an extreme overcurrent (ALERT) event
+        if (g_buckDisabled) {
+          digitalWrite(PIN_BUCK_EN, HIGH);
+          g_buckDisabled = false;
+          // Remove OUTV bypass and clear any latched OUTV fault that formed while
+          // the buck was off (0V on LOAD INA226 is expected during that period).
+          // The 200ms OUTV debounce gives the output time to ramp up before
+          // protection re-arms.
+          protector.setOutvBypass(false);
+          protector.clearOutvLatch();
+          Serial.println("[APP] Buck re-enabled after fault clearance");
+        }
         // Ensure the Home screen fully repaints after leaving blocking modal
         ui->requestFullHomeRepaint();
         ui->showStatus(tele);

@@ -41,9 +41,9 @@ namespace INA226_SRC {
   // Returns total coil current through the source INA shunt
   float  getRelayCoilCurrent();
   
-  // Check if measured coil current matches expected state
-  // expectedCount: number of relays that should be ON
-  // nominalCoilMa: expected current per relay coil (default 80mA)
-  // Returns true if current is within expected range (±40% tolerance)
-  bool   verifyRelayCoils(int expectedCount, float nominalCoilMa = 80.0f);
+  // Check if measured coil current matches expected state.
+  // Rounds total measured current to nearest coil count and compares to expectedCount.
+  // A single dead or phantom coil is always detectable regardless of how many are active.
+  // nominalCoilMa: expected draw per coil (default 75mA)
+  bool   verifyRelayCoils(int expectedCount, float nominalCoilMa = 75.0f);
 }

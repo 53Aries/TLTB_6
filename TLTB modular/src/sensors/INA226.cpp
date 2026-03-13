@@ -199,19 +199,20 @@ float INA226_SRC::getRelayCoilCurrent(){
 
 bool INA226_SRC::verifyRelayCoils(int expectedCount, float nominalCoilMa){
   if (!PRESENT) return true; // Can't verify, assume OK
-  
+
   float measuredMa = readCurrentA() * 1000.0f;  // Convert A to mA
-  float expectedMa = expectedCount * nominalCoilMa;
-  
-  // Allow ±40% tolerance for relay coil variation and measurement uncertainty
-  float tolerance = 0.4f;
-  float minExpected = expectedMa * (1.0f - tolerance);
-  float maxExpected = expectedMa * (1.0f + tolerance);
-  
-  // Special case: if expecting zero relays, accept up to 5mA (noise floor)
+
+  // Zero-coil case: accept anything below half a coil's worth (noise floor)
   if (expectedCount == 0) {
-    return (measuredMa < 5.0f);
+    return (measuredMa < nominalCoilMa * 0.5f);
   }
-  
-  return (measuredMa >= minExpected && measuredMa <= maxExpected);
+
+  // Round measured current to nearest coil count.
+  // Boundary between N and N+1 coils sits at (N + 0.5) * nominal, so any single
+  // dead or phantom coil shifts the reading by a full nominalCoilMa — always
+  // crossing a boundary regardless of how many coils are active.
+  // Assumes per-coil variation stays within ±50% of nominal (automotive relays
+  // at a fixed rail voltage are typically within ±20%).
+  int measuredCount = (int)((measuredMa + nominalCoilMa * 0.5f) / nominalCoilMa);
+  return (measuredCount == expectedCount);
 }

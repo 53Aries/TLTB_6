@@ -43,13 +43,16 @@
 // Triggers before buck converter shutdown to log short circuit event
 #define PIN_INA_LOAD_ALERT  41
 
+// ======================= Buck Converter Enable =======================
+#define PIN_BUCK_EN       14    // Active-high enable for buck converter
+
 // ======================= Relays (ULN2803 active-high) =======================
-#define PIN_RELAY_LH       9   // Left Turn
-#define PIN_RELAY_RH       10   // Right Turn
-#define PIN_RELAY_BRAKE   11    // Brake Lights
-#define PIN_RELAY_TAIL    12    // Tail Lights
-#define PIN_RELAY_MARKER  13    // Marker Lights
-#define PIN_RELAY_AUX     14    // Auxiliary
+#define PIN_RELAY_LH       8   // Left Turn
+#define PIN_RELAY_RH       9   // Right Turn
+#define PIN_RELAY_BRAKE   10   // Brake Lights
+#define PIN_RELAY_TAIL    11   // Tail Lights
+#define PIN_RELAY_MARKER  12   // Marker Lights
+#define PIN_RELAY_AUX     13   // Auxiliary
 
 // Array for DisplayUI.cpp relay status logic
 static const int RELAY_PIN[] = {
