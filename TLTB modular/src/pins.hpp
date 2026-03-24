@@ -1,14 +1,14 @@
 // File Overview: Centralized ESP32-S3 pin map covering the TFT, encoder, rotary switch,
 // INA226 sensors, relays, buzzer, and RF receiver connections.
-// 2/20/2026 update pins for ESP board v1.5.2
+// 2/20/2026 update pins for ESP board v1.6
 #pragma once
 
 // ======================= SPI (FSPI) for TFT =======================
 #define PIN_FSPI_SCK    36 // SCL
 #define PIN_FSPI_MOSI   37 // SDA
-#define PIN_FSPI_MISO   36 // not used, but must be defined
+#define PIN_FSPI_MISO   -1 // not used, but must be defined
 
-// ======================= Display (ST7735S) =======================
+// ======================= Display (ST7789) =======================
 #define PIN_TFT_CS      40
 #define PIN_TFT_DC      39
 #define PIN_TFT_RST     38

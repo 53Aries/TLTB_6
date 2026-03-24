@@ -4,7 +4,7 @@
 #include "DisplayUI.hpp"
 
 #include <Adafruit_GFX.h>
-#include <Adafruit_ST7735.h>
+#include <Adafruit_ST7789.h>
 #include <math.h>
 
 #include "pins.hpp"
@@ -95,7 +95,7 @@ DisplayUI::DisplayUI(const DisplayCtor& c)
   _bleStop(c.onBleStop),
   _bleRestart(c.onBleRestart) {}
 
-void DisplayUI::attachTFT(Adafruit_ST7735* tft, int blPin){ _tft=tft; _blPin=blPin; }
+void DisplayUI::attachTFT(Adafruit_ST7789* tft, int blPin){ _tft=tft; _blPin=blPin; }
 void DisplayUI::attachBrightnessSetter(std::function<void(uint8_t)> fn){ _setBrightness=fn; }
 
 void DisplayUI::begin(Preferences& p){
@@ -121,10 +121,10 @@ void DisplayUI::begin(Preferences& p){
   // Splash (leave visible during boot - will be cleared by first screen draw)
   _tft->fillScreen(ST77XX_BLACK);
   _tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
-  _tft->setTextSize(1);
-  _tft->setCursor(10, 38); _tft->print("Swanger Innovations");
   _tft->setTextSize(2);
-  _tft->setCursor(26, 58); _tft->print("TLTB");
+  _tft->setCursor(46, 96); _tft->print("Swanger Innovations");
+  _tft->setTextSize(3);
+  _tft->setCursor(124, 120); _tft->print("TLTB");
   delay(900);
   // Keep splash visible - don't clear here
 }
@@ -167,7 +167,7 @@ void DisplayUI::rebuildFaultText(){
 }
 
 void DisplayUI::drawFaultTicker(bool force){
-  const int w = 160, h = 128, barH = 18, y = h - barH;
+  const int w = 320, h = 240, barH = 22, y = h - barH;
 
   if (_faultMask == 0) {
     _tft->fillRect(0, y, w, barH, ST77XX_BLACK);
@@ -178,10 +178,10 @@ void DisplayUI::drawFaultTicker(bool force){
 
   _tft->fillRect(0, y, w, barH, ST77XX_RED);
   _tft->setTextColor(ST77XX_WHITE, ST77XX_RED);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
 
   String msg = _faultText + "   ";
-  int msgW = msg.length() * 6; // ~6 px/char
+  int msgW = msg.length() * 12; // ~12 px/char at size 2
   int x0 = 4 - (_faultScroll % msgW);
 
   for (int rep = 0; rep < 3; ++rep) {
@@ -200,25 +200,22 @@ void DisplayUI::showStatus(const Telemetry& t){
   bool startupGuard = _getStartupGuard ? _getStartupGuard() : false;
   
   // Layout constants for targeted clears
-  const int W = 160;
-  // Shrink top rows slightly and reduce spacing to fit all lines above the fault ticker
-  const int GAP     = 1;
-  const int hMode   = 16;  // size=2 text = 16 px
-  const int hLoad   = 16;  // size=2 text = 16 px
-  const int hActive = 16;  // size=2 or 1; reserve for size=2
-  const int h12     = 12;
-  const int hLvp       = 12;
-  const int hOutv      = 12;
-  const int hCooldown  = 12;
+  const int W = 320;
+  const int GAP        = 4;
+  const int hMode      = 24;  // size=3 text = 24 px
+  const int hLoad      = 24;  // size=3 text = 24 px
+  const int hActive    = 24;  // size=3; reserve for size=3
+  const int hLvp       = 16;  // size=2 text = 16 px
+  const int hOutv      = 16;
+  const int hCooldown  = 16;
   const int yMode      = 4;
   const int yLoad      = yMode + hMode + GAP;
   const int yActive    = yLoad + hLoad + GAP;
-  const int y12        = yActive + hActive + GAP;
-  const int yLvp       = y12 + h12 + GAP;
+  const int yLvp       = yActive + hActive + GAP;
   const int yOutv      = yLvp + hLvp + GAP;
   const int yCooldown  = yOutv + hOutv + GAP;
-  // Footer position when fault ticker hidden; we suppress footer entirely if faults present to avoid overlap
-  const int yHintNoTicker = 114;  const int hHint   = 12;
+  // Footer position when fault ticker hidden (ticker at y=218)
+  const int yHintNoTicker = 198;  const int hHint   = 16;
 
   static bool s_inited = false;
   static String s_prevActive;
@@ -242,15 +239,15 @@ void DisplayUI::showStatus(const Telemetry& t){
     // Check if startup guard is active - show prominent warning
     if (startupGuard) {
       // Show startup guard warning in red
-      _tft->fillRect(0, 20, W, 80, ST77XX_RED);
+      _tft->fillRect(0, 20, W, 108, ST77XX_RED);
       _tft->setTextColor(ST77XX_WHITE, ST77XX_RED);
-      _tft->setTextSize(2);
-      _tft->setCursor(4, 30);
+      _tft->setTextSize(3);
+      _tft->setCursor(4, 28);
       _tft->print("WARNING!");
-      _tft->setTextSize(1);
-      _tft->setCursor(4, 55);
+      _tft->setTextSize(2);
+      _tft->setCursor(4, 62);
       _tft->print("Cycle OUTPUT to OFF");
-      _tft->setCursor(4, 75);
+      _tft->setCursor(4, 84);
       _tft->print("before operation");
       
       // Footer only if no fault ticker occupying bottom area
@@ -264,7 +261,7 @@ void DisplayUI::showStatus(const Telemetry& t){
       // Line 1: MODE (top)
       {
         _tft->fillRect(0, yMode-2, W, hMode, ST77XX_BLACK);
-        _tft->setTextSize(2);
+        _tft->setTextSize(3);
         _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
         _tft->setCursor(4, yMode);
         _tft->print("MODE: ");
@@ -272,7 +269,7 @@ void DisplayUI::showStatus(const Telemetry& t){
       }
 
       // Line 2: Load (color-coded by amperage)
-      _tft->setTextSize(2);
+      _tft->setTextSize(3);
       _tft->setCursor(4, yLoad);
       if (isnan(t.loadA)) {
         _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
@@ -296,9 +293,9 @@ void DisplayUI::showStatus(const Telemetry& t){
       // Line 2: Active (auto size)
       {
         String line = String("Active: ") + activeStr;
-        int availPx = 160 - 4;
-        int w2 = line.length() * 6 * 2;
-        uint8_t sz = (w2 > availPx) ? 1 : 2;
+        int availPx = 320 - 4;
+        int w3 = line.length() * 6 * 3;
+        uint8_t sz = (w3 > availPx) ? 2 : 3;
         _tft->setTextSize(sz);
         _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
         _tft->setCursor(4, yActive);
@@ -306,7 +303,7 @@ void DisplayUI::showStatus(const Telemetry& t){
       }
 
       // Line 4: Batt Volt (was LVP) (colored by state: red=ACTIVE, yellow=BYPASS, green=ok) + live src voltage
-      _tft->setTextSize(1);
+      _tft->setTextSize(2);
       _tft->setCursor(4, yLvp);
       bool bypass = _getLvpBypass ? _getLvpBypass() : false;
       uint16_t lvpColor;
@@ -395,7 +392,7 @@ void DisplayUI::showStatus(const Telemetry& t){
   if ((isnan(t.loadA) != isnan(_last.loadA)) ||
       (!isnan(t.loadA) && fabsf(t.loadA - _last.loadA) > 0.1f)) {
     _tft->fillRect(0, yLoad-2, W, hLoad, ST77XX_BLACK);
-    _tft->setTextSize(2);
+    _tft->setTextSize(3);
     _tft->setCursor(4, yLoad);
     if (isnan(t.loadA)) {
       _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
@@ -420,7 +417,7 @@ void DisplayUI::showStatus(const Telemetry& t){
   if (activeStr != s_prevActive) {
     _tft->fillRect(0, yActive-2, W, hActive, ST77XX_BLACK);
     String line = String("Active: ") + activeStr;
-    int availPx = 160 - 4;
+    int availPx = 320 - 4;
     int w2 = line.length() * 6 * 2;
     uint8_t sz = (w2 > availPx) ? 1 : 2;
     _tft->setTextSize(sz);
@@ -439,7 +436,7 @@ void DisplayUI::showStatus(const Telemetry& t){
     bool bypass = _getLvpBypass ? _getLvpBypass() : false;
     if ((t.lvpLatched != _last.lvpLatched) || (bypass != prevBypass) || (t.srcV != _last.srcV)) {
       _tft->fillRect(0, yLvp-2, W, hLvp, ST77XX_BLACK);
-      _tft->setTextSize(1);
+      _tft->setTextSize(2);
       _tft->setCursor(4, yLvp);
       uint16_t lvpColor;
       if (bypass) { lvpColor = ST77XX_YELLOW; _tft->setTextColor(lvpColor, ST77XX_BLACK); _tft->print("Batt Volt: BYPASS"); }
@@ -457,7 +454,7 @@ void DisplayUI::showStatus(const Telemetry& t){
     bool outvBy = _getOutvBypass ? _getOutvBypass() : false;
     if ((t.outvLatched != _last.outvLatched) || (outvBy != prevOutvBy) || (t.outV != _last.outV)) {
       _tft->fillRect(0, yOutv-2, W, hOutv, ST77XX_BLACK);
-      _tft->setTextSize(1);
+      _tft->setTextSize(2);
       _tft->setCursor(4, yOutv);
       uint16_t outvColor;
       if (outvBy) { outvColor = ST77XX_YELLOW; _tft->setTextColor(outvColor, ST77XX_BLACK); _tft->print("System Volt: BYPASS"); }
@@ -473,7 +470,7 @@ void DisplayUI::showStatus(const Telemetry& t){
   if (t.cooldownActive != _last.cooldownActive || 
       t.cooldownSecsRemaining != _last.cooldownSecsRemaining) {
     _tft->fillRect(0, yCooldown-2, W, hCooldown, ST77XX_BLACK);
-    _tft->setTextSize(1);
+    _tft->setTextSize(2);
     _tft->setCursor(4, yCooldown);
     if (t.cooldownActive) {
       _tft->setTextColor(ST77XX_RED, ST77XX_BLACK);
@@ -556,54 +553,52 @@ void DisplayUI::detectAndSetBatteryType(){
   
   // Display modal with result
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
-  
+  _tft->setTextSize(2);
+
   if (detected) {
     // Successfully detected - apply setting and show confirmation
     _lvChanged(lvpSetting);
     if (_prefs) {
       _prefs->putFloat(_kLvCut, lvpSetting);
     }
-    
+
     // Show detection result
     _tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
-    _tft->setCursor(10, 20);
+    _tft->setCursor(10, 10);
     _tft->print(batteryType);
     _tft->print(" battery detected");
-    
+
     _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    _tft->setCursor(10, 40);
+    _tft->setCursor(10, 32);
     _tft->print("Battery: ");
     _tft->printf("%.1fV", srcV);
-    
-    _tft->setCursor(10, 60);
-    _tft->print("Low battery protection");
-    _tft->setCursor(10, 72);
-    _tft->print("set for ");
+
+    _tft->setCursor(10, 56);
+    _tft->print("LVP set: ");
     _tft->printf("%.1fV", lvpSetting);
-    
+
   } else {
     // Could not detect - show error
     _tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-    _tft->setCursor(10, 20);
+    _tft->setCursor(10, 10);
     _tft->print("Unable to detect");
-    _tft->setCursor(10, 32);
+    _tft->setCursor(10, 30);
     _tft->print("battery type");
-    
+
     _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     _tft->setCursor(10, 52);
     _tft->print("Battery: ");
     _tft->printf("%.1fV", srcV);
-    
-    _tft->setCursor(10, 72);
-    _tft->print("Manually set LVP Cutoff.");
-    _tft->setCursor(10, 84);
+
+    _tft->setCursor(10, 74);
+    _tft->print("Set LVP manually.");
+    _tft->setCursor(10, 94);
     _tft->print("See manual.");
   }
-  
+
   // Footer
   _tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
-  _tft->setCursor(10, 110);
+  _tft->setCursor(10, 120);
   _tft->print("Auto-clearing in 6s...");
   
   // Hold modal for 6 seconds
@@ -614,13 +609,13 @@ void DisplayUI::detectAndSetBatteryType(){
   requestFullHomeRepaint();
 }
 
-// New: scrolling menu (no header). Shows 8 rows and scrolls as needed.
+// New: scrolling menu (no header). Shows 18 rows and scrolls as needed.
 void DisplayUI::drawMenu(){
-  const int rows = 8;
+  const int rows = 12;
   const int y0   = 8;
-  const int rowH = 12;
-  // Ensure menu uses size 1 text regardless of prior Home text size
-  _tft->setTextSize(1);
+  const int rowH = 18;
+  // Ensure menu uses size 2 text regardless of prior Home text size
+  _tft->setTextSize(2);
   int total = _devMenuOnly ? DEV_MENU_COUNT : MENU_COUNT;
 
   static int menuTop = 0;      // first visible index
@@ -633,8 +628,8 @@ void DisplayUI::drawMenu(){
     if (i < menuTop || i >= menuTop + rows) return;
     int y = y0 + (i - menuTop) * rowH;
     uint16_t bg = sel ? ST77XX_BLUE : ST77XX_BLACK;
-    _tft->fillRect(0, y-2, 160, rowH, bg);
-    _tft->setTextSize(1);
+    _tft->fillRect(0, y-2, 320, rowH, bg);
+    _tft->setTextSize(2);
     _tft->setTextColor(ST77XX_WHITE, bg);
     _tft->setCursor(6, y);
     int srcIdx = _devMenuOnly ? kDevMenuMap[i] : i;
@@ -666,10 +661,11 @@ void DisplayUI::drawMenu(){
 
 void DisplayUI::drawMenuItem(int i, bool sel){
   // Unused by the new scrolling menu; kept for compatibility.
-  int y = 8 + i*12;
+  int y = 8 + i*18;
   uint16_t bg = sel ? ST77XX_BLUE : ST77XX_BLACK;
   uint16_t fg = ST77XX_WHITE;
-  _tft->fillRect(0, y-2, 160, 12, bg);
+  _tft->fillRect(0, y-2, 320, 18, bg);
+  _tft->setTextSize(2);
   _tft->setTextColor(fg, bg);
   _tft->setCursor(6, y);
   int srcIdx = _devMenuOnly ? kDevMenuMap[i] : i;
@@ -880,13 +876,13 @@ bool DisplayUI::handleMenuSelect(int idx){
       // RF Learn (simple modal)
       int sel = 0, lastSel = -1;
       _tft->fillScreen(ST77XX_BLACK);
-      _tft->setTextSize(1);
+      _tft->setTextSize(2);
       _tft->setCursor(6,8);  _tft->print("Learn RF for:");
-      _tft->setCursor(6,44); _tft->print("OK=Start  BACK=Exit");
+      _tft->setCursor(6,52); _tft->print("OK=Start  BACK=Exit");
 
       auto drawSel = [&](int s){
-        _tft->fillRect(0,20,160,16,ST77XX_BLACK);
-        _tft->setCursor(6,24);
+        _tft->fillRect(0,26,320,20,ST77XX_BLACK);
+        _tft->setCursor(6,28);
         if      (s==0) _tft->print("LEFT");
         else if (s==1) _tft->print("RIGHT");
         else if (s==2) _tft->print("BRAKE");
@@ -910,14 +906,14 @@ bool DisplayUI::handleMenuSelect(int idx){
 
         if (okPressed()) {
           // Start listening / learning
-          _tft->fillRect(0,60,160,14,ST77XX_BLACK);
-          _tft->setCursor(6,60); _tft->print("Listening...");
+          _tft->fillRect(0,72,320,20,ST77XX_BLACK);
+          _tft->setCursor(6,72); _tft->print("Listening...");
           bool ok = _rfLearn ? _rfLearn(sel) : false;
 
           // Show brief result and allow encoder changes while visible.
-          _tft->fillRect(0,60,160,28,ST77XX_BLACK);
-          _tft->setCursor(6,60); _tft->print(ok ? "Saved" : "Failed");
-          _tft->setCursor(6,76); _tft->print("OK=Learn  BACK=Exit");
+          _tft->fillRect(0,72,320,40,ST77XX_BLACK);
+          _tft->setCursor(6,72); _tft->print(ok ? "Saved" : "Failed");
+          _tft->setCursor(6,92); _tft->print("OK=Learn  BACK=Exit");
 
           uint32_t shownAt = millis();
           // brief window where encoder/back/ok are polled so user can change selection or immediately re-learn
@@ -941,13 +937,13 @@ bool DisplayUI::handleMenuSelect(int idx){
   case 6: {                                               // Clear RF Remotes
       // Clear RF Remotes (confirmation)
       _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+      _tft->setTextSize(2);
       _tft->setCursor(6,10); _tft->println("Clear RF Remotes");
-      _tft->setCursor(6,26); _tft->println("Erase all learned");
-      _tft->setCursor(6,38); _tft->println("remotes from memory?");
-      _tft->setCursor(6,62); _tft->println("OK=Confirm  BACK=Cancel");
+      _tft->setCursor(6,30); _tft->println("Erase all learned");
+      _tft->setCursor(6,50); _tft->println("remotes from memory?");
+      _tft->setCursor(6,80); _tft->println("OK=Confirm  BACK=Cancel");
       while (true) {
-        if (okPressed())   { RF::clearAll(); _tft->fillRect(6,80,148,12,ST77XX_BLACK); _tft->setCursor(6,80); _tft->print("Cleared"); delay(600); g_forceHomeFull = true; break; }
+        if (okPressed())   { RF::clearAll(); _tft->fillRect(6,104,308,20,ST77XX_BLACK); _tft->setCursor(6,104); _tft->print("Cleared"); delay(600); g_forceHomeFull = true; break; }
         if (backPressed()) { g_forceHomeFull = true; break; }
         delay(10);
       }
@@ -964,12 +960,12 @@ bool DisplayUI::handleMenuSelect(int idx){
 void DisplayUI::saveLvCut(float v){ if(_prefs) _prefs->putFloat(_kLvCut, v); }
 
 void DisplayUI::adjustLvCutoff(){
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   float v=_prefs->getFloat(_kLvCut, 17.0f);
   _tft->fillScreen(ST77XX_BLACK); _tft->setCursor(6,10); _tft->println("Set LVP Cutoff (V)");
   while(true){
     int8_t d=readStep(); if(d){ v+=d*0.1f; if(v<9)v=9; if(v>20)v=20;
-      _tft->fillRect(6,28,148,12,ST77XX_BLACK); _tft->setCursor(6,28); _tft->printf("%4.1f V", v);
+      _tft->fillRect(6,32,308,20,ST77XX_BLACK); _tft->setCursor(6,32); _tft->printf("%4.1f V", v);
     }
     if(okPressed()){ saveLvCut(v); if(_lvChanged) _lvChanged(v); break; }
     if(backPressed()) break;
@@ -978,12 +974,12 @@ void DisplayUI::adjustLvCutoff(){
 }
 
 void DisplayUI::adjustOcpLimit(){
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   float cur = _prefs->getFloat(KEY_OCP, 22.0f);
   _tft->fillScreen(ST77XX_BLACK); _tft->setCursor(6,10); _tft->println("Set OCP (A)");
   while(true){
     int8_t d=readStep(); if(d){ cur+=d; if(cur<5)cur=5; if(cur>25)cur=25;
-      _tft->fillRect(6,28,148,12,ST77XX_BLACK); _tft->setCursor(6,28); _tft->printf("%4.1f A", cur);
+      _tft->fillRect(6,32,308,20,ST77XX_BLACK); _tft->setCursor(6,32); _tft->printf("%4.1f A", cur);
     }
     if(okPressed()){ if(_ocpChanged) _ocpChanged(cur); _prefs->putFloat(KEY_OCP, cur); break; }
     if(backPressed()) break;
@@ -993,13 +989,13 @@ void DisplayUI::adjustOcpLimit(){
 
 // --- Output Voltage cutoff adjuster (8..16 V) ---
 void DisplayUI::adjustOutputVCutoff(){
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   float v = _prefs->getFloat(KEY_OUTV_CUTOFF, 10.0f);
   if (v < 8.0f) v = 8.0f; if (v > 16.0f) v = 16.0f;
   _tft->fillScreen(ST77XX_BLACK); _tft->setCursor(6,10); _tft->println("Set OutV Cutoff (V)");
   while(true){
     int8_t d=readStep(); if(d){ v += d*0.1f; if(v<8.0f)v=8.0f; if(v>16.0f)v=16.0f;
-      _tft->fillRect(6,28,148,12,ST77XX_BLACK); _tft->setCursor(6,28); _tft->printf("%4.1f V", v);
+      _tft->fillRect(6,32,308,20,ST77XX_BLACK); _tft->setCursor(6,32); _tft->printf("%4.1f V", v);
     }
     if(okPressed()){ if(_outvChanged) _outvChanged(v); _prefs->putFloat(KEY_OUTV_CUTOFF, v); break; }
     if(backPressed()) break;
@@ -1015,9 +1011,9 @@ void DisplayUI::toggleLvpBypass(){
 
   // Brief confirmation splash (short toast), then return.
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,10); _tft->println("LVP Bypass");
-  _tft->setCursor(6,28); _tft->print("State: ");
+  _tft->setCursor(6,32); _tft->print("State: ");
   _tft->print(newState ? "ON" : "OFF");
   delay(450);
 
@@ -1035,9 +1031,9 @@ void DisplayUI::toggleOutvBypass(){
 
   // Brief confirmation splash (short toast), then return.
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,10); _tft->println("OutV Bypass");
-  _tft->setCursor(6,28); _tft->print("State: ");
+  _tft->setCursor(6,32); _tft->print("State: ");
   _tft->print(newState ? "ON" : "OFF");
   delay(450);
 
@@ -1051,16 +1047,16 @@ void DisplayUI::toggleOutvBypass(){
 bool DisplayUI::protectionAlarm(const char* title, const char* line1, const char* line2){
   _tft->fillScreen(ST77XX_RED);
   _tft->setTextColor(ST77XX_WHITE, ST77XX_RED);
-  _tft->setTextSize(2);
+  _tft->setTextSize(3);
   _tft->setCursor(6, 6);  _tft->print(title);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
 
-  _tft->setCursor(6, 34); _tft->print(line1 ? line1 : "");
-  if (line2){ _tft->setCursor(6, 46); _tft->print(line2); }
+  _tft->setCursor(6, 36); _tft->print(line1 ? line1 : "");
+  if (line2){ _tft->setCursor(6, 56); _tft->print(line2); }
 
-  _tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+  _tft->fillRect(0, 210, 320, 30, ST77XX_BLACK);
   _tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-  _tft->setCursor(6, 112); _tft->print("OK=Dismiss");
+  _tft->setCursor(6, 218); _tft->print("OK=Dismiss");
 
   while (true) {
     if (okPressed())   { g_forceHomeFull = true; return true; }
@@ -1077,18 +1073,18 @@ int DisplayUI::listPicker(const char* title, const char** items, int count, int 
 }
 
 int DisplayUI::listPickerDynamic(const char* title, std::function<const char*(int)> get, int count, int startIdx){
-  const int rows = 8, y0 = 18, rowH = 12;
-  _tft->setTextSize(1);
+  const int rows = 11, y0 = 22, rowH = 18;
+  _tft->setTextSize(2);
   int idx = startIdx < 0 ? 0 : (startIdx >= count ? count - 1 : startIdx);
   int top = 0;
 
   _tft->fillScreen(ST77XX_BLACK);
   _tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(4,4); _tft->print(title);
 
   _tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-  _tft->setCursor(6, y0 + rows * rowH + 2);
+  _tft->setCursor(6, 222);
   _tft->print("OK=Select  BACK=Exit");
 
   auto drawRow = [&](int i, bool sel){
@@ -1096,8 +1092,8 @@ int DisplayUI::listPickerDynamic(const char* title, std::function<const char*(in
     int y = y0 + (i - top) * rowH;
     if (y < y0 || y >= y0 + rows * rowH) return;
     uint16_t bg = sel ? ST77XX_BLUE : ST77XX_BLACK;
-    _tft->fillRect(0, y - 1, 160, rowH, bg);
-  _tft->setTextSize(1);
+    _tft->fillRect(0, y - 1, 320, rowH, bg);
+    _tft->setTextSize(2);
     _tft->setTextColor(ST77XX_WHITE, bg);
     _tft->setCursor(6, y);
     const char* s = get(i);
@@ -1108,7 +1104,7 @@ int DisplayUI::listPickerDynamic(const char* title, std::function<const char*(in
   if (idx >= top + rows) top = idx - rows + 1;
 
   auto redrawWindow = [&](){
-    _tft->fillRect(0, y0 - 1, 160, rows * rowH + 1, ST77XX_BLACK);
+    _tft->fillRect(0, y0 - 1, 320, rows * rowH + 1, ST77XX_BLACK);
     for (int i = top; i < top + rows && i < count; ++i) drawRow(i, i == idx);
   };
 
@@ -1167,7 +1163,7 @@ String DisplayUI::textInput(const char* title, const String& initial, int maxLen
   };
 
   auto drawHeader = [&](){
-    _tft->fillRect(0,0,160, Y_GRID-2, ST77XX_BLACK);
+    _tft->fillRect(0,0,320, Y_GRID-2, ST77XX_BLACK);
     _tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
     _tft->setCursor(4, 4); _tft->print(title);
     _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
@@ -1198,7 +1194,7 @@ String DisplayUI::textInput(const char* title, const String& initial, int maxLen
   auto fullRedraw = [&](){
     _tft->fillScreen(ST77XX_BLACK);
     drawHeader();
-    _tft->fillRect(0, Y_GRID-2, 160, 128-(Y_GRID-2), ST77XX_BLACK);
+    _tft->fillRect(0, Y_GRID-2, 320, 240-(Y_GRID-2), ST77XX_BLACK);
     for (int i=0;i<total;i++) drawCell(i, i==sel);
   };
 
@@ -1251,9 +1247,9 @@ void DisplayUI::wifiScanAndConnectUI(){
   if (_bleStop) _bleStop();
   
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,8);  _tft->println("Wi-Fi Connect");
-  _tft->setCursor(6,22); _tft->println("Scanning...");
+  _tft->setCursor(6,28); _tft->println("Scanning...");
 
   // CRITICAL: Wait for BLE to fully deinitialize before starting WiFi
   // BLE shutdown includes 500ms delay, but we add extra buffer
@@ -1275,7 +1271,7 @@ void DisplayUI::wifiScanAndConnectUI(){
     uint32_t scanStart = millis();
     while ((n = WiFi.scanComplete()) == WIFI_SCAN_RUNNING) {
       if (millis() - scanStart > 15000) { // 15 sec timeout
-        _tft->setCursor(6,38); _tft->println("Scan timeout");
+        _tft->setCursor(6,48); _tft->println("Scan timeout");
         WiFi.scanDelete();
         WiFi.mode(WIFI_OFF);
         delay(200);
@@ -1286,13 +1282,13 @@ void DisplayUI::wifiScanAndConnectUI(){
         return;
       }
       delay(100); // Let BLE process during scan
-      _tft->setCursor(6,38); _tft->print(".");
+      _tft->setCursor(6,48); _tft->print(".");
     }
   }
   
-  if (n <= 0) { 
-    _tft->setCursor(6,38); 
-    _tft->println("No networks found"); 
+  if (n <= 0) {
+    _tft->setCursor(6,48);
+    _tft->println("No networks found");
     WiFi.scanDelete();
     WiFi.mode(WIFI_OFF);
     delay(200);
@@ -1324,23 +1320,23 @@ void DisplayUI::wifiScanAndConnectUI(){
   if (!open) pass = textInput("Password", "", 63, "abc/ABC/123/sym  OK=sel  BACK=del");
 
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,8); _tft->print("Connecting to "); _tft->println(ssid);
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis(); int y=28;
-  while (WiFi.status()!=WL_CONNECTED && millis()-start < 15000) { 
-    _tft->setCursor(6,y); 
-    _tft->print("."); 
+  while (WiFi.status()!=WL_CONNECTED && millis()-start < 15000) {
+    _tft->setCursor(6,y);
+    _tft->print(".");
     delay(100); // Reduced from 200ms for better BLE coexistence
   }
 
   if (WiFi.status()==WL_CONNECTED) {
     if (_prefs){ _prefs->putString(_kSsid, ssid); _prefs->putString(_kPass, pass); }
-    _tft->setCursor(6,y+12); _tft->print("OK: "); _tft->println(WiFi.localIP());
+    _tft->setCursor(6,y+20); _tft->print("OK: "); _tft->println(WiFi.localIP());
     delay(700);
   } else {
-    _tft->setCursor(6,y+12); _tft->println("Failed.");
+    _tft->setCursor(6,y+20); _tft->println("Failed.");
     delay(700);
   }
   
@@ -1360,12 +1356,12 @@ void DisplayUI::wifiScanAndConnectUI(){
 
 void DisplayUI::wifiForget(){
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,10); _tft->println("Wi-Fi Forget...");
   if (_prefs) { _prefs->remove(_kSsid); _prefs->remove(_kPass); }
   WiFi.disconnect(true, true);
   delay(250);
-  _tft->setCursor(6,28); _tft->println("Done");
+  _tft->setCursor(6,32); _tft->println("Done");
   delay(500);
   g_forceHomeFull = true;
 }
@@ -1376,21 +1372,21 @@ void DisplayUI::runOta(){
   if (_bleStop) _bleStop();
   
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(6,10); _tft->println("OTA Update");
 
   constexpr int STATUS_X = 6;
-  constexpr int STATUS_Y = 28;
-  constexpr int STATUS_WIDTH = 148;
-  constexpr int STATUS_LINE_H = 12;
+  constexpr int STATUS_Y = 36;
+  constexpr int STATUS_WIDTH = 308;
+  constexpr int STATUS_LINE_H = 20;
   constexpr int STATUS_MAX_LINES = 3;
   constexpr int PROGRESS_Y = STATUS_Y + STATUS_MAX_LINES * STATUS_LINE_H + 6;
 
   auto drawStatus = [&](const char* msg){
     String text = msg ? String(msg) : String("");
-    _tft->fillRect(0, STATUS_Y - 2, 160, STATUS_MAX_LINES * STATUS_LINE_H + 6, ST77XX_BLACK);
+    _tft->fillRect(0, STATUS_Y - 2, 320, STATUS_MAX_LINES * STATUS_LINE_H + 6, ST77XX_BLACK);
     _tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    const int charsPerLine = STATUS_WIDTH / 6; // ~6 px per char at text size 1
+    const int charsPerLine = STATUS_WIDTH / 12; // ~12 px per char at text size 2
     for (int line = 0; line < STATUS_MAX_LINES; ++line) {
       if (!text.length()) break;
       int take = min(charsPerLine, (int)text.length());
@@ -1431,7 +1427,7 @@ void DisplayUI::runOta(){
   bool ok = Ota::updateFromGithubLatest(nullptr, cb);
   
   if (!ok) {
-    _tft->setCursor(6,92); _tft->println("OTA failed");
+    _tft->setCursor(6,120); _tft->println("OTA failed");
     
     // Shut down WiFi to free antenna for BLE
     WiFi.disconnect(true);
@@ -1454,12 +1450,12 @@ void DisplayUI::runOta(){
 // ================================================================
 void DisplayUI::showSystemInfo(){
   _tft->fillScreen(ST77XX_BLACK);
-  _tft->setTextSize(1);
+  _tft->setTextSize(2);
   _tft->setCursor(4, 6);  _tft->setTextColor(ST77XX_CYAN); _tft->println("System Info & Faults");
   _tft->setTextColor(ST77XX_WHITE);
 
-  int y=22;
-  auto line=[&](const char* k, const char* v){ _tft->setCursor(4,y); _tft->print(k); _tft->print(": "); _tft->println(v); y+=12; };
+  int y=28;
+  auto line=[&](const char* k, const char* v){ _tft->setCursor(4,y); _tft->print(k); _tft->print(": "); _tft->println(v); y+=20; };
 
   // Firmware version string: pull from NVS (written by OTA on success)
   String ver = _prefs ? _prefs->getString(KEY_FW_VER, "") : String("");

@@ -11,7 +11,7 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <Adafruit_ST7735.h>
+#include <Adafruit_ST7789.h>
 
 // ESP-IDF headers
 #include "esp_task_wdt.h"
@@ -37,7 +37,7 @@
 // Global State
 // =============================================================================
 
-static Adafruit_ST7735* tft = nullptr;    // Shared SPI display
+static Adafruit_ST7789* tft = nullptr;    // Shared SPI display
 static DisplayUI* ui = nullptr;            // UI controller
 Preferences prefs;                         // NVS storage
 static Telemetry tele{};                   // Telemetry data
@@ -364,24 +364,17 @@ void setup() {
   pinMode(PIN_TFT_RST, OUTPUT);
 
   // SPI once (shared TFT + RF)
-  // Explicitly configure SPI pins before begin to ensure JTAG defaults are overridden
-  pinMode(PIN_FSPI_SCK, OUTPUT);
-  pinMode(PIN_FSPI_MOSI, OUTPUT);
-  pinMode(PIN_FSPI_MISO, INPUT);
-  SPI.begin(PIN_FSPI_SCK, PIN_FSPI_MISO, PIN_FSPI_MOSI, PIN_TFT_CS);
-  delay(30); // allow peripheral settle
+  // MISO passed as -1: display is write-only and spiAttachMISO(36) would call
+  // pinMode(36, INPUT) after spiAttachSCK sets it OUTPUT, disabling the clock line.
+  SPI.begin(PIN_FSPI_SCK, -1, PIN_FSPI_MOSI, -1);
 
-  // TFT reset + init
-  // Stronger hardware reset timing to improve first-boot reliability after long power-off
-  digitalWrite(PIN_TFT_RST, HIGH); delay(50);
-  digitalWrite(PIN_TFT_RST, LOW ); delay(120);
-  digitalWrite(PIN_TFT_RST, HIGH); delay(150);
-
-  tft = new Adafruit_ST7735(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
+  tft = new Adafruit_ST7789(&SPI, PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
+  // Library's initSPI() handles hardware reset (HIGH->LOW->HIGH with proper delays)
   // Start with a conservative SPI speed for signal integrity on longer jumpers
   tft->setSPISpeed(8000000UL);
-  tft->initR(INITR_BLACKTAB);
-  tft->setRotation(1);
+  tft->init(240, 320);
+  tft->invertDisplay(false); // Cancel the INVON baked into Adafruit's ST7789 init sequence
+  tft->setRotation(3);
   tft->fillScreen(ST77XX_BLACK);
 
   // TFT backlight not used (GPIO 42 repurposed for INA ALERT pin)
@@ -459,9 +452,9 @@ void setup() {
       tft->print("Check wiring & loads.");
       
       // Footer instruction
-      tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+      tft->fillRect(0, 220, 320, 20, ST77XX_BLACK);
       tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-      tft->setCursor(6, 112);
+      tft->setCursor(6, 224);
       tft->print("Contact service if needed");
       delay(5000); // Give user time to read
       // Clear flags so we don't show on every boot
@@ -678,6 +671,7 @@ void loop() {
   tele.relayCoilLatched = protector.isRelayCoilLatched();
 
   // Cooldown timer logic: limit sustained high current usage
+  uint32_t now = millis();
   float current = !isnan(tele.loadA) ? fabsf(tele.loadA) : 0.0f;
   
   if (g_cooldownStartMs > 0) {
@@ -771,9 +765,9 @@ void loop() {
             tft->print(rname);
           }
           // Footer instruction
-          tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+          tft->fillRect(0, 220, 320, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Release switches to restart");
+          tft->setCursor(6, 224); tft->print("Release switches to restart");
         }
         // Block until all switches released (debounced); keep relays off
         {
@@ -851,9 +845,9 @@ void loop() {
           tft->setCursor(6, 34); tft->print("Output voltage fault.");
           tft->setCursor(6, 46); tft->print("Check system voltage.");
           // Footer instruction
-          tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+          tft->fillRect(0, 220, 320, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Release switches to restart");
+          tft->setCursor(6, 224); tft->print("Release switches to restart");
         }
         // Block until all switches released (debounced); keep relays off
         {
@@ -917,9 +911,9 @@ void loop() {
           tft->setCursor(6, 58); tft->print("Contact customer svc.");
           
           // Footer instruction
-          tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+          tft->fillRect(0, 220, 320, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Release switches to restart");
+          tft->setCursor(6, 224); tft->print("Release switches to restart");
         }
         // Block until all switches released (debounced); keep relays off
         {
@@ -971,9 +965,9 @@ void loop() {
           tft->setCursor(6, 34); tft->print("Battery voltage low.");
           tft->setCursor(6, 46); tft->print("Charge battery.");
           // Footer instruction
-          tft->fillRect(0, 108, 160, 20, ST77XX_BLACK);
+          tft->fillRect(0, 220, 320, 20, ST77XX_BLACK);
           tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
-          tft->setCursor(6, 112); tft->print("Release switches to restart");
+          tft->setCursor(6, 224); tft->print("Release switches to restart");
         }
         // Block until all switches released (debounced); keep relays off
         {

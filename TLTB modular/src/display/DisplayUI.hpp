@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <Preferences.h>
-#include <Adafruit_ST7735.h>
+#include <Adafruit_ST7789.h>
 #include "telemetry.hpp"
 
 struct DisplayPins { int CS, DC, RST, BL; };
@@ -51,7 +51,7 @@ class DisplayUI {
 public:
   explicit DisplayUI(const DisplayCtor& c);
 
-  void attachTFT(Adafruit_ST7735* tft, int blPin);
+  void attachTFT(Adafruit_ST7789* tft, int blPin);
   void attachBrightnessSetter(std::function<void(uint8_t)> fn);
   void begin(Preferences& p);
 
@@ -136,7 +136,7 @@ private:
 
   Preferences* _prefs=nullptr;
 
-  Adafruit_ST7735* _tft=nullptr;
+  Adafruit_ST7789* _tft=nullptr;
   int _blPin = -1;
   std::function<void(uint8_t)> _setBrightness;
 
